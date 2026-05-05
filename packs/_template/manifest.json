@@ -1,0 +1,14 @@
+{
+  "name": "REPLACE_ME",
+  "version": "0.1.0",
+  "description": "One-line description of what this pack does.",
+  "trigger": "always-on | phrase: `use foo` | manual",
+  "components": {
+    "rules": [],
+    "hooks": [],
+    "hooks_json": null,
+    "skills": [],
+    "data": []
+  },
+  "requires": []
+}

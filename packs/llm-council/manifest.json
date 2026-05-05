@@ -1,0 +1,14 @@
+{
+  "name": "llm-council",
+  "version": "0.1.0",
+  "description": "Multi-round Proposer / Critic / Implementer / Researcher debate before answering. Triggered by the phrase `use council`.",
+  "trigger": "phrase: `use council` (case-insensitive)",
+  "components": {
+    "rules": ["rules/llm-council.mdc"],
+    "hooks": [],
+    "hooks_json": null,
+    "skills": [],
+    "data": []
+  },
+  "requires": []
+}

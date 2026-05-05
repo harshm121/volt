@@ -1,0 +1,24 @@
+{
+  "name": "org-hierarchy",
+  "version": "0.1.0",
+  "description": "Director / Manager / 10-SDE org chart for ML engineering work. Triggered by the phrase `use org`.",
+  "trigger": "phrase: `use org` (case-insensitive)",
+  "components": {
+    "rules": ["rules/org-hierarchy.mdc"],
+    "hooks": [],
+    "hooks_json": null,
+    "skills": [],
+    "data": [
+      "data/org/roles/data-engineer.md",
+      "data/org/roles/env-steward.md",
+      "data/org/roles/general-mle.md",
+      "data/org/roles/job-launcher.md",
+      "data/org/roles/job-monitor.md",
+      "data/org/roles/lit-scout.md",
+      "data/org/roles/run-triage-debugger.md",
+      "data/org/roles/sweep-designer.md"
+    ]
+  },
+  "requires": ["python3"],
+  "notes": "Installer rewrites any packaging-machine absolute path prefix (/Users/<x>/.cursor/ or /home/<x>/.cursor/) inside the rule to $HOME at install time, so role-contract references resolve on whichever machine installs the pack."
+}

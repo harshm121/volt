@@ -1,0 +1,105 @@
+---
+description: Activate this protocol ONLY when the user's prompt contains the literal phrase `use council` (case-insensitive). If the phrase is absent, ignore this rule entirely.
+alwaysApply: false
+---
+# LLM Council Protocol
+
+Activate this protocol ONLY when the user's prompt contains the literal phrase `use council` (case-insensitive). If the phrase is absent, ignore this rule entirely.
+
+The council is structured as a small panel that **argues among itself across multiple rounds** before you (the moderator) report back to the user. Subagents do not talk to each other directly — you relay messages between them, then synthesize.
+
+**Verbatim rule (critical):** Subagent responses must be preserved and surfaced **in full, verbatim** — never summarize, paraphrase, or truncate them. This applies both when relaying a prior round's output into the next subagent's prompt, and when presenting subagent outputs in the final response to the user. The only thing you may add is your own moderator synthesis at the end.
+
+## Roles
+
+- **Agent 1 — Moderator (you)**: Frame the question, dispatch subagents, relay arguments between them across rounds, then deliver a single collective response to the user. Do NOT answer the underlying question yourself first and do NOT leak your own opinion into subagent prompts.
+- **SubAgent 1 — Proposer**: Produces the first concrete response/proposal/answer to the question.
+- **SubAgent 2 — Critic**: Critiques SubAgent 1's response, surfaces flaws, and provides counter-arguments or alternative answers.
+- **SubAgent 3 — Implementer (conditional)**: Only spawn when the question involves something that *would actually be built, executed, deployed, migrated, or operated*. Mentally simulates implementing the proposed idea end-to-end and identifies concrete gaps (edge cases, integration friction, ops/runtime issues, missing steps). Skip this role for purely conceptual / advisory / opinion questions where simulated execution adds no signal.
+- **SubAgent 4 — Researcher (conditional)**: Only spawn when the question is one where external opinion / prior art / current state of the world would meaningfully inform the answer (e.g. tech choices, library/framework comparisons, industry practice, recent news, benchmarks, known gotchas, market data, public debates). Skip for questions that are purely about the user's own private codebase, internal trade-offs, or pure reasoning where the web adds no signal. The Researcher uses `WebSearch` (and `WebFetch` where useful) to find existing opinions, articles, docs, benchmarks, post-mortems, discussions, and prior solutions related to the question, then reports findings with concrete URLs and direct quotes — not opinions of its own.
+
+## Model selection (moderator's discretion)
+
+The moderator may pass an explicit `model` argument to the `Task` tool to deliberately use **different models for different subagents**. This produces real cognitive diversity (different training data, different blind spots) instead of one model arguing with itself. Use this when the question is high-stakes or where model bias matters (architectural decisions, contested opinions, research). For routine questions, omitting `model` (so subagents inherit the moderator's model) is fine. Only choose models the user has explicitly authorized; if unsure, omit the parameter.
+
+## Procedure
+
+### Step 0 — Frame
+Restate the user's question or decision in one sentence. Decide which conditional roles are warranted: SubAgent 3 (Implementer) and SubAgent 4 (Researcher). Briefly note these choices (1–2 lines, including any per-subagent model picks) before dispatching.
+
+### Round 1 — Initial proposal + parallel research
+Spawn **SubAgent 1** (Proposer). If SubAgent 4 (Researcher) is warranted, spawn it **in parallel in the same tool-call batch** as SubAgent 1 — research is independent of the proposal and its findings should be available before Round 2.
+- `subagent_type: "generalPurpose"` (use `"explore"` with `readonly: true` for pure code-analysis questions)
+- `run_in_background: false`
+- SubAgent 1 prompt: full user context, role = Proposer, instruction to give a concrete, opinionated answer with full reasoning. Explicitly tell the subagent: "Return your complete response, not a summary. Do not self-truncate."
+- SubAgent 4 prompt: full user context, role = Researcher. Instruction: use `WebSearch` (and `WebFetch` to read promising sources) to find existing opinions, prior art, documentation, benchmarks, post-mortems, blog posts, GitHub discussions, HN/Reddit threads, papers, and any other relevant material. Return a structured report containing: (a) what was searched, (b) the most relevant sources with URLs and direct quotes/excerpts (not paraphrases), (c) any clear consensus, dissent, or recent shifts in opinion, (d) gaps where authoritative info was not found. The Researcher must NOT inject its own opinion or recommendation — it is a librarian, not a debater. Return the full report, not a summary.
+
+### Round 2 — Critique (and parallel implementation pass)
+Spawn **SubAgent 2** (Critic) with SubAgent 1's **full verbatim proposal** AND SubAgent 4's **full verbatim research report** (if Round 1 included research) embedded in the prompt. If SubAgent 3 (Implementer) is warranted, spawn it **in parallel in the same tool-call batch** as SubAgent 2, with the same Round 1 context.
+- SubAgent 2 prompt: role = Critic. Instruction: attack the proposal's weakest points, leverage the research findings (cite them) where they expose problems with or alternatives to the proposal, name concrete failure modes, and offer at least one counter-proposal or modification. Return the full critique, not a summary.
+- SubAgent 3 prompt: role = Implementer. Instruction: walk through actually building/running/shipping the proposal step by step; list every concrete gap, missing prerequisite, edge case, and operational risk discovered during simulated execution; reference research findings where they reveal known pitfalls. Return the full walkthrough, not a summary.
+
+### Round 3 — Rebuttal / convergence
+Spawn **SubAgent 1** again with SubAgent 2's **full verbatim critique**, plus SubAgent 3's full verbatim gaps and SubAgent 4's full verbatim research report (if present), all embedded.
+- Role = Proposer-revising. Instruction: directly address each critique and gap point-by-point; concede where the critique is right, defend where it isn't, incorporate relevant research findings, and produce a **revised proposal**. Return the full revised proposal and rebuttal, not a summary.
+
+### Round 4 — Optional final critique (only if needed)
+If the revised proposal in Round 3 introduces *new* substantive claims or unresolved tension remains, spawn **SubAgent 2** once more, passing Round 3's full verbatim output. Return the full final critique, not a summary. Otherwise skip.
+
+### Hard stop
+Maximum 4 rounds. Do not loop further — converge or explicitly report disagreement.
+
+## Dispatch rules
+
+- Use the `Task` tool. `run_in_background: false` so the moderator blocks on each round.
+- Within a round, run independent subagents in parallel via a single tool-call batch.
+- Across rounds, calls are sequential because each round depends on the previous round's output.
+- `description`: 3–5 words, e.g. `Critic: round 2 rebuttal`.
+- Each prompt must include: (a) the user's original question/context, (b) the assigned role, (c) all prior-round outputs the subagent needs to react to, **quoted in full and verbatim — never summarized, paraphrased, or truncated**, (d) explicit role instructions, (e) explicit instruction "Return your complete response. Do not summarize or self-truncate."
+- Never reveal the moderator's own opinion to a subagent.
+- Do not impose word caps on subagents — they should respond at whatever length the question warrants.
+- The moderator may set the `model` parameter on individual `Task` calls to assign different models to different subagents (see "Model selection" above). Apply the same `model` to a given subagent across rounds for continuity (e.g. SubAgent 1 in Rounds 1 and 3 should use the same model).
+
+## Final Moderator Output (to the user)
+
+Surface every subagent response **in full and verbatim**. Do not summarize, paraphrase, or excerpt them. The only moderator-authored sections are `## Question`, `## Key Disagreements`, `## Collective Answer`, and `## Next Step`.
+
+```
+## Question
+<one-sentence restatement>
+
+## Council Debate (full transcripts)
+
+### Round 1 — SubAgent 1 (Proposer)
+<SubAgent 1's complete response, verbatim>
+
+### Round 1 — SubAgent 4 (Researcher)  <!-- only if spawned -->
+<SubAgent 4's complete response, verbatim — including all source URLs and quotes>
+
+### Round 2 — SubAgent 2 (Critic)
+<SubAgent 2's complete response, verbatim>
+
+### Round 2 — SubAgent 3 (Implementer)  <!-- only if spawned -->
+<SubAgent 3's complete response, verbatim>
+
+### Round 3 — SubAgent 1 (Revised proposal)
+<SubAgent 1's complete response, verbatim>
+
+### Round 4 — SubAgent 2 (Final critique)  <!-- only if spawned -->
+<SubAgent 2's complete response, verbatim>
+
+## Key Disagreements
+<remaining genuine conflicts, or "Converged" if resolved>
+
+## Collective Answer
+<the moderator's synthesized recommendation grounded in the debate; call out which arguments weighed most and why>
+
+## Next Step
+<concrete action, or a clarifying question if blocked>
+```
+
+## Exit Conditions
+
+- If the user's follow-up does NOT contain the trigger phrase, drop back to normal single-agent mode.
+- If the question is trivial (one obvious answer), say so and skip the council rather than manufacturing fake debate.
+- If subagents converge early (Round 2 critique fully agrees with proposal and no implementer gaps), you may skip Round 3 and report convergence.

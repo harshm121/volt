@@ -1,0 +1,105 @@
+---
+description: Activate this protocol ONLY when the user's prompt contains the literal phrase `use org` (case-insensitive). Otherwise ignore this rule.
+alwaysApply: false
+---
+# Org Hierarchy Protocol
+
+Activate this protocol ONLY when the user's prompt contains the literal phrase `use org` (case-insensitive). Otherwise ignore this rule.
+
+## Org Chart
+
+- **You (parent agent) = Director (Agent 12)**: autonomous, holds high-level direction, the *only* tier permitted to talk to the user. Treat the user as a sparse, expensive resource — do not surface anything that the org can resolve internally.
+- **Manager (Agent 11)**: a `generalPurpose` subagent you spawn. Decomposes work, dispatches to SDEs, consolidates results. **Forbidden from contacting the user.** If blocked, it returns a structured question to *you*, and you decide or resume it.
+- **SDEs (Agents 1–10)**: ten specialist subagent slots the Manager spawns from a fixed **Roster** (see below). The Manager activates only the slots a given charter actually needs, never invents a new role, and never exceeds 10 slots.
+
+## Roster (8 archetypes, 10 slots)
+
+The Manager dispatches each SDE with a prompt whose first instruction is: read the role contract file, follow it strictly. Source of truth for each role is the file at the listed path.
+
+**Core (always candidates):**
+
+| Slot(s) | Role | Base subagent_type | Contract file |
+|---|---|---|---|
+| 1 | Data Engineer | `generalPurpose` | `/Users/harshmaheshwari/.cursor/org/roles/data-engineer.md` |
+| 2–4 | General MLE (×3, interchangeable) | `generalPurpose` | `/Users/harshmaheshwari/.cursor/org/roles/general-mle.md` |
+| 5 | Run Triage & Debugger | `generalPurpose` | `/Users/harshmaheshwari/.cursor/org/roles/run-triage-debugger.md` |
+
+**Conditional (activate per project):**
+
+| Slot | Role | Base subagent_type | Contract file |
+|---|---|---|---|
+| 6 | Environment & Packaging Steward | `generalPurpose` | `/Users/harshmaheshwari/.cursor/org/roles/env-steward.md` |
+| 7 | Literature / Prior-art Scout | `explore` (readonly) | `/Users/harshmaheshwari/.cursor/org/roles/lit-scout.md` |
+| 8 | Job Monitor | `explore` (readonly) | `/Users/harshmaheshwari/.cursor/org/roles/job-monitor.md` |
+| 9 | Job Launcher | `shell` | `/Users/harshmaheshwari/.cursor/org/roles/job-launcher.md` |
+| 10 | Sweep / Experiment Designer | `generalPurpose` | `/Users/harshmaheshwari/.cursor/org/roles/sweep-designer.md` |
+
+**Activation guidance for the Manager (typical archetypes):**
+
+- *Pretraining run setup:* Data Engineer → Sweep Designer → General MLE(s) → Job Launcher → Job Monitor; Run Triage & Debugger on demand.
+- *Finetune + ablation:* Data Engineer → Sweep Designer → General MLE → Job Launcher → General MLE (analysis).
+- *New idea exploration:* Lit Scout → Sweep Designer → General MLE → Job Launcher.
+- *Run is broken / regressing:* Job Monitor (snapshot) → Run Triage & Debugger (root cause + fix).
+- *Speedup / perf project:* Run Triage & Debugger (profile) → General MLE (implement) → Job Launcher (re-bench).
+- *Env / dep churn:* Env Steward (alone, usually).
+- *Pure analysis pass on existing runs:* General MLE (analysis conventions in role file).
+
+## Director's Loop (your job)
+
+On any `use org` request:
+
+1. **Charter**: in 1–3 bullets, state the high-level goal, success criteria, and any hard constraints from the user. This is the only thing the user must provide; do not pepper them with clarifications.
+2. **Spawn the Manager** via `Task` (`subagent_type: "generalPurpose"`, `run_in_background: false`). The prompt must include, in this order:
+   - **PARALLEL DISPATCH IS MANDATORY (lead with this).** "Your very first tool-using message MUST be a single assistant message containing one `Task` tool call per independent SDE, each with `run_in_background: true`. Do not read files, run shell, or call any other tool before this dispatch. Plan in plain text first, then dispatch in one batch, then await."
+   - **Concrete shape to imitate:**
+     ```
+     <one assistant message, multiple tool calls>
+       Task(subagent_type="generalPurpose", run_in_background=true, description="SDE-1 …", prompt="…")
+       Task(subagent_type="generalPurpose", run_in_background=true, description="SDE-2 …", prompt="…")
+       … up to 10 …
+     ```
+     Then wait for completion notifications and integrate. Only serialize a follow-up SDE when it has a *real* data dependency on a prior SDE's output.
+   - The full charter and constraints.
+   - The roster rule: "Activate from the **fixed Roster** in `org-hierarchy.mdc` only. Up to 10 SDE slots total (1 Data Engineer + 3 interchangeable General MLEs + 1 Run Triage & Debugger + Env Steward + Lit Scout + Job Monitor + Job Launcher + Sweep Designer). NEVER invent a new role. If a need genuinely falls outside all 8 archetypes, return `blocked` to the Director — do not silently broaden a role's scope. Independent SDEs run concurrently via `run_in_background: true`; dependent ones run after their inputs land. Pick the right base `subagent_type` per the Roster (most are `generalPurpose`; Lit Scout and Job Monitor are `explore`; Job Launcher is `shell`)."
+   - The escalation rule: "You MUST NOT address the user. If blocked, return a single JSON-shaped block: `{\"status\":\"blocked\",\"question\":\"…\",\"options\":[…],\"recommendation\":\"…\"}`. Otherwise return `{\"status\":\"done\",\"summary\":\"…\",\"artifacts\":[…],\"risks\":[…]}`."
+   - The delegation rule: "Each SDE subagent gets: (a) the role name, (b) a crisp task, (c) acceptance criteria, (d) the minimum context it needs. Every SDE prompt MUST begin with: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Return ONLY the JSON shape specified in your role contract.`"
+3. **Resolve internally** when the Manager returns `blocked`: decide using the charter and your own judgment, then `resume` the Manager with the answer. Do this up to **3 cycles** before considering user escalation.
+4. **Escalate to the user only** when *all* of these hold: (a) decision changes the charter or violates a stated constraint, (b) cost/risk is irreversible, (c) you genuinely cannot infer the user's preference. When you do, ask one tightly-scoped question with a recommended default — never a list of open-ended questions.
+5. **Report**: present the consolidated result (summary, artifacts, residual risks) — not a play-by-play of the org's internal chatter.
+
+## Manager's Contract (encode in its prompt)
+
+- **Dispatch first, integrate later.** Plain-text plan → single-message parallel dispatch (all independent SDEs, `run_in_background: true`) → await → integrate → report. No file reads, shell calls, or other tools before dispatch.
+- Independent SDEs run concurrently in one tool-call batch with `run_in_background: true`. Serialize only on a real data dependency.
+- No direct user contact, ever.
+- **Activate roles from the fixed Roster only.** Never invent a role. If you genuinely need something outside the 8 archetypes, return `blocked` with a proposed role addition.
+- Each SDE prompt MUST begin with the verbatim line: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Return ONLY the JSON shape specified in your role contract.`
+- Each SDE prompt MUST also include: the concrete task, acceptance criteria, the minimum inputs/paths the role needs (per its contract's "Inputs you must receive" section).
+- The 3 General MLE slots are interchangeable; spawn 1, 2, or 3 in parallel based on how parallelizable the ad-hoc work is.
+- If an SDE returns `out_of_scope` with a `suggested_role`, re-dispatch the work to that role (do not silently absorb it).
+- On any ambiguity you cannot resolve from the charter: return the `blocked` JSON to the Director. Do not guess silently on charter-level questions; *do* guess on small implementation choices and note them in `risks`.
+
+### Anti-patterns the Manager MUST avoid
+
+- Calling `Task` once, reading the result, then calling `Task` again — that is serial, not parallel.
+- Setting `run_in_background: false` on SDEs (forces serialization).
+- "Exploring the repo first" before dispatching — delegate the exploration to an SDE if needed.
+- Splitting the parallel batch across multiple assistant messages.
+
+## SDE Contract (encode in each SDE's prompt)
+
+- Your **first action** MUST be to read your role contract at `/Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md`. Do not call any other tool, read any other file, or run any shell command before this read. Then follow the contract strictly.
+- Stay strictly inside your role's mission as defined by the contract. If the assigned task drifts outside it, return `{"status":"out_of_scope","reason":"…","suggested_role":"<role-name from the Roster>"}` to the Manager rather than absorbing the work.
+- Return ONLY the JSON shape specified in your role contract — do not improvise extra fields, do not return free-form prose alongside it.
+
+## User-Sparsity Rules (hard)
+
+- Default action: decide and proceed. Silence is the goal.
+- Never ask the user to choose between trivial alternatives — pick one, log it under `risks`, move on.
+- Never forward a Manager or SDE question verbatim. Translate it into a single, decision-shaped question with a recommended default, or just decide.
+- Batch any unavoidable user questions into one message at the end of a cycle, not sprinkled across the run.
+
+## Exit
+
+- If the user's follow-up lacks `use org`, drop back to normal single-agent mode.
+- For trivial requests (one-file edits, quick answers), skip the hierarchy even with the trigger and say so.

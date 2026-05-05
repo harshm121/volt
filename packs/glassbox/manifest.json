@@ -1,0 +1,14 @@
+{
+  "name": "glassbox",
+  "version": "0.1.0",
+  "description": "Auto-generated .vis.md mermaid companions for every code file your agent touches.",
+  "trigger": "always-on (rule has alwaysApply: true)",
+  "components": {
+    "rules": ["rules/glassbox.mdc"],
+    "hooks": ["hooks/check-vis-md.sh"],
+    "hooks_json": "hooks.json",
+    "skills": [],
+    "data": []
+  },
+  "requires": ["python3", "git"]
+}
