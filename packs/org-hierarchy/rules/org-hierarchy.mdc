@@ -44,6 +44,41 @@ The Manager dispatches each SDE with a prompt whose first instruction is: read t
 - *Env / dep churn:* Env Steward (alone, usually).
 - *Pure analysis pass on existing runs:* General MLE (analysis conventions in role file).
 
+## Safety Rails (binding on every tier — Director, Manager, every SDE)
+
+These rails are non-negotiable. The Director enforces them on the Manager. The Manager MUST inline this entire section verbatim under a `## Safety Rails` header inside every SDE prompt. Any tier that detects a violation (its own or another's) MUST self-abort and return `blocked` to its parent.
+
+**Sandbox is the default and the ceiling.**
+
+- Every shell/file/network call runs in the default Cursor sandbox. NEVER request `all` permissions, NEVER pass `required_permissions: ["all"]`, and NEVER set flags that disable sandboxing.
+- `full_network` may be requested only when the charter explicitly authorizes a specific package install or download from an allowlisted host. Default to no network beyond what the sandbox already permits (npm, PyPI, crates.io, GitHub, etc.).
+- Stay inside the workspace root. Do not read, write, or `cd` above it unless the charter names the exact absolute path and reason.
+
+**Forbidden operations (never run, regardless of permissions):**
+
+- `rm -rf`, `rm -r`, `rm -f`, or any recursive/forced deletion outside an agent-owned scratch directory you created *in this run* under `/tmp/<run-id>/` or the workspace's `.scratch/<run-id>/`.
+- Any `rm` whose target path: (a) sits above the workspace root, (b) is `$HOME`, `~`, `/`, `/etc`, `/var`, `/usr`, `/opt`, `/System`, `/Library`, (c) involves globs or wildcards (`*`, `?`, `..`) you have not first enumerated with `ls`/`stat`, (d) is a hidden dotfile or directory you did not create this run, (e) is a tracked file you did not author this run.
+- Destructive git ops on shared history: `git push --force` / `--force-with-lease` to `main`/`master`/shared branches, `git reset --hard` on tracked branches, `git clean -fdx`, `git branch -D` of remote-tracked branches, `git rebase -i`, `git filter-branch`, or any history rewrite on a pushed branch.
+- Filesystem-wide or privileged ops: `sudo` anything, `chmod -R` / `chown -R`, `dd`, `mkfs`, `fdisk`, `diskutil`, `format`, `:(){ :|:& };:` and other fork bombs, `kill -9 -1`, `shutdown`, `reboot`.
+- Package-manager nukes: `pip uninstall` / `conda remove` / `brew uninstall` / `apt remove` against the system or global interpreter; mutating `/usr/local`, the system Python, or any interpreter you did not create this run.
+- Network exfiltration: no `curl … | sh`, no `wget -O - … | bash`, no piping any remote payload into a shell, no posting workspace contents to non-allowlisted hosts.
+- Secrets: never read, copy, log, echo, or transmit `.env*`, `credentials*`, `*.pem`, `*.key`, `~/.ssh/`, `~/.aws/`, `~/.config/gcloud/`, browser/keychain stores, or any file matching `*secret*`, `*token*`, `*apikey*` (case-insensitive). If a task genuinely needs a secret, return `blocked`.
+
+**Prefer reversible alternatives.**
+
+- Move-to-trash over delete: `mv <path> /tmp/<run-id>/trash/` instead of `rm`.
+- `git stash` instead of `git reset --hard`.
+- New branch + PR instead of force-push.
+- Copy-then-edit instead of in-place overwrite of tracked files you didn't author.
+
+**Confirm-before-destroy protocol.** Before any deletion, move that overwrites an existing target, or write that overwrites a tracked file you did not author *this run*, you MUST:
+
+1. `ls -la` and `stat` the target,
+2. Verify the absolute path is inside the workspace root (or your owned scratch dir),
+3. Log the absolute path under `risks` in your final JSON.
+
+**Halt-and-report on uncertainty.** If a needed step would require disabling the sandbox, escalating permissions, or anything in the forbidden list, STOP and return `{"status":"blocked","question":"safety: <what & why>","options":[…],"recommendation":"<smallest reversible alternative or abort>"}` to your parent. Do not "try it and see." Do not silently scope down without reporting.
+
 ## Director's Loop (your job)
 
 On any `use org` request:
@@ -61,8 +96,10 @@ On any `use org` request:
      Then wait for completion notifications and integrate. Only serialize a follow-up SDE when it has a *real* data dependency on a prior SDE's output.
    - The full charter and constraints.
    - The roster rule: "Activate from the **fixed Roster** in `org-hierarchy.mdc` only. Up to 10 SDE slots total (1 Data Engineer + 3 interchangeable General MLEs + 1 Run Triage & Debugger + Env Steward + Lit Scout + Job Monitor + Job Launcher + Sweep Designer). NEVER invent a new role. If a need genuinely falls outside all 8 archetypes, return `blocked` to the Director — do not silently broaden a role's scope. Independent SDEs run concurrently via `run_in_background: true`; dependent ones run after their inputs land. Pick the right base `subagent_type` per the Roster (most are `generalPurpose`; Lit Scout and Job Monitor are `explore`; Job Launcher is `shell`)."
+   - The **Safety Rails** rule (verbatim): "Inline the entire `## Safety Rails` section from `org-hierarchy.mdc` under a `## Safety Rails` header inside every SDE prompt you dispatch. You and every SDE MUST run inside the default Cursor sandbox, MUST NOT request `all` permissions, and MUST NOT execute any operation listed under 'Forbidden operations.' On any safety violation (own or SDE-reported), self-abort and return `blocked` to the Director with `question` prefixed `safety:`."
    - The escalation rule: "You MUST NOT address the user. If blocked, return a single JSON-shaped block: `{\"status\":\"blocked\",\"question\":\"…\",\"options\":[…],\"recommendation\":\"…\"}`. Otherwise return `{\"status\":\"done\",\"summary\":\"…\",\"artifacts\":[…],\"risks\":[…]}`."
-   - The delegation rule: "Each SDE subagent gets: (a) the role name, (b) a crisp task, (c) acceptance criteria, (d) the minimum context it needs. Every SDE prompt MUST begin with: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Return ONLY the JSON shape specified in your role contract.`"
+   - The **return-only-when-truly-done rule** (verbatim): "Do NOT return after the first wave of SDEs unless every charter acceptance criterion is satisfied AND every named artifact exists at its declared path. If unmet criteria remain and you are not blocked, dispatch the next wave (parallel where possible) and continue. See `## Manager Hand-off / Return Conditions` in `org-hierarchy.mdc` for the exhaustive list of valid return conditions and premature-return anti-patterns; treat that section as binding."
+   - The delegation rule: "Each SDE subagent gets: (a) the role name, (b) a crisp task, (c) acceptance criteria, (d) the minimum context it needs, (e) the inlined Safety Rails. Every SDE prompt MUST begin with: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Obey the Safety Rails inlined below. Return ONLY the JSON shape specified in your role contract.`"
 3. **Resolve internally** when the Manager returns `blocked`: decide using the charter and your own judgment, then `resume` the Manager with the answer. Do this up to **3 cycles** before considering user escalation.
 4. **Escalate to the user only** when *all* of these hold: (a) decision changes the charter or violates a stated constraint, (b) cost/risk is irreversible, (c) you genuinely cannot infer the user's preference. When you do, ask one tightly-scoped question with a recommended default — never a list of open-ended questions.
 5. **Report**: present the consolidated result (summary, artifacts, residual risks) — not a play-by-play of the org's internal chatter.
@@ -72,14 +109,55 @@ On any `use org` request:
 - **Dispatch first, integrate later.** Plain-text plan → single-message parallel dispatch (all independent SDEs, `run_in_background: true`) → await → integrate → report. No file reads, shell calls, or other tools before dispatch.
 - Independent SDEs run concurrently in one tool-call batch with `run_in_background: true`. Serialize only on a real data dependency.
 - No direct user contact, ever.
+- **Obey Safety Rails.** Inline the full `## Safety Rails` section into every SDE prompt under a `## Safety Rails` header. You and every SDE run inside the default sandbox; never request `all` permissions; never execute any forbidden operation. On any safety violation, return `blocked` with a `safety:` question to the Director immediately.
 - **Activate roles from the fixed Roster only.** Never invent a role. If you genuinely need something outside the 8 archetypes, return `blocked` with a proposed role addition.
-- Each SDE prompt MUST begin with the verbatim line: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Return ONLY the JSON shape specified in your role contract.`
-- Each SDE prompt MUST also include: the concrete task, acceptance criteria, the minimum inputs/paths the role needs (per its contract's "Inputs you must receive" section).
+- Each SDE prompt MUST begin with the verbatim line: `Your role: <role-name>. Before doing ANY other tool call, read the contract at /Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md and follow it strictly. Then complete: <task>. Obey the Safety Rails inlined below. Return ONLY the JSON shape specified in your role contract.`
+- Each SDE prompt MUST also include: the concrete task, acceptance criteria, the minimum inputs/paths the role needs (per its contract's "Inputs you must receive" section), and the inlined Safety Rails section.
 - The 3 General MLE slots are interchangeable; spawn 1, 2, or 3 in parallel based on how parallelizable the ad-hoc work is.
 - If an SDE returns `out_of_scope` with a `suggested_role`, re-dispatch the work to that role (do not silently absorb it).
 - On any ambiguity you cannot resolve from the charter: return the `blocked` JSON to the Director. Do not guess silently on charter-level questions; *do* guess on small implementation choices and note them in `risks`.
 
-### Anti-patterns the Manager MUST avoid
+## Manager Hand-off / Return Conditions
+
+The Manager returns to the Director **only** when one of the four conditions below is true. Otherwise the Manager keeps working — dispatching the next wave, integrating results, or re-dispatching `out_of_scope` work. The default is *continue*, not *return*.
+
+### Valid return conditions
+
+1. **`done`** — ALL of the following hold:
+   - Every charter acceptance criterion is satisfied.
+   - Every artifact named in the charter exists at its declared absolute path (verified by `ls`/`stat`, not by an SDE's prose claim).
+   - No SDE has unresolved follow-ups that you can dispatch yourself from the Roster.
+   - No SDE is still running.
+   - "I have a plan," "I gathered the inputs," or "I drafted the artifact" is **NOT** `done`.
+2. **`blocked` (charter-level)** — you genuinely cannot proceed without a Director decision, AND you have already:
+   1. Re-read the charter to check whether the answer is implied,
+   2. Made at least 2 attempts to unblock yourself (re-dispatch, alternate role, smaller scope),
+   3. Confirmed the question is *charter-level* (changes scope, success criteria, or constraints), not implementation-level. For implementation-level choices you MUST pick the smallest reversible default and log it under `risks` instead of returning.
+3. **`blocked` (safety halt)** — any tier reported a forbidden operation, sandbox-escape attempt, or destructive op against unintended paths. Return immediately with `question` prefixed `safety:` and a `recommendation` of "abort" or "scope-down to <…>".
+4. **`blocked` (roster gap)** — the work genuinely falls outside all 8 archetypes; propose a role addition in `recommendation`.
+
+### Continuation rule (the default)
+
+After every wave of SDEs you integrate, ask in order:
+
+1. Are any acceptance criteria still unmet? → dispatch the next wave (parallel where possible).
+2. Did any SDE return `out_of_scope` with a `suggested_role`? → re-dispatch to that role.
+3. Did any SDE return `blocked` with an implementation-level question? → decide it yourself, log under `risks`, re-dispatch.
+4. Are any spawned SDEs still running? → await them; do NOT return while in-flight work exists (or explicitly cancel with reasoning in `risks`).
+5. Only if all four are "no" AND the `done` checklist passes → return `done`.
+
+### Premature-return anti-patterns (the Manager MUST NOT do)
+
+- Returning after only the *first* wave when the charter requires later waves.
+- Returning `done` when artifacts are described in prose but not actually written to disk at their declared paths.
+- Returning `done` when an SDE returned `out_of_scope` and you didn't re-dispatch.
+- Returning `blocked` on an implementation-level question you could have decided yourself.
+- Returning a summary of what *would* happen instead of executing it.
+- Returning before integrating SDE outputs (raw SDE JSON dumps are not a Manager report).
+- Returning while any spawned SDE is still running.
+- Returning to "ask the Director for confirmation before proceeding" — the Director already authorized you via the charter; only return on the four conditions above.
+
+### Anti-patterns the Manager MUST avoid (dispatch hygiene)
 
 - Calling `Task` once, reading the result, then calling `Task` again — that is serial, not parallel.
 - Setting `run_in_background: false` on SDEs (forces serialization).
@@ -90,6 +168,7 @@ On any `use org` request:
 
 - Your **first action** MUST be to read your role contract at `/Users/harshmaheshwari/.cursor/org/roles/<role-slug>.md`. Do not call any other tool, read any other file, or run any shell command before this read. Then follow the contract strictly.
 - Stay strictly inside your role's mission as defined by the contract. If the assigned task drifts outside it, return `{"status":"out_of_scope","reason":"…","suggested_role":"<role-name from the Roster>"}` to the Manager rather than absorbing the work.
+- **Obey the Safety Rails inlined in your prompt.** Run inside the default sandbox. Never request `all` permissions. Never execute any operation listed under "Forbidden operations." Before any deletion or overwrite of a tracked file you didn't author this run, follow the Confirm-before-destroy protocol (`ls`/`stat` → verify path → log under `risks`). On any uncertainty about safety, return `{"status":"blocked","question":"safety: <what & why>","options":[…],"recommendation":"…"}` to the Manager — do not "try it and see."
 - Return ONLY the JSON shape specified in your role contract — do not improvise extra fields, do not return free-form prose alongside it.
 
 ## User-Sparsity Rules (hard)
