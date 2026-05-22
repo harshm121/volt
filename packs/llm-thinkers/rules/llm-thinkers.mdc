@@ -1,0 +1,141 @@
+---
+description: Activate this protocol ONLY when the user's prompt contains the literal phrase `use thinkers` (case-insensitive). If the phrase is absent, ignore this rule entirely.
+alwaysApply: false
+---
+# LLM Thinkers Protocol
+
+Activate this protocol ONLY when the user's prompt contains the literal phrase `use thinkers` (case-insensitive). If the phrase is absent, ignore this rule entirely.
+
+The thinkers are a **breadth-first ideation panel**. Unlike the council (which debates), the thinkers do **not** talk to each other and do **not** see each other's work. Each thinker independently generates *multiple* ways of looking at the problem or *multiple* candidate options for addressing it, using a different underlying model so that their cognitive blind spots differ. The moderator's job is to elaborate the question, fan it out, then merge all results into a single de-duplicated option set and hand that set to the **LLM Council** for ranking.
+
+**Verbatim rule (critical):** Thinker responses must be preserved internally **in full, verbatim** while the moderator does de-duplication — never summarize, paraphrase, or drop options. Combining two options that mean the same thing is allowed; deleting an option is not. The final answer surfaced to the user is the council's ranked output (which itself includes verbatim transcripts per its own protocol).
+
+**No local files rule (critical):** Subagents must never infer file-read permission for themselves. Unless the moderator explicitly gives a subagent an allow-list of exact files or directories to read, that subagent is forbidden from reading, searching, globbing, or otherwise inspecting any local file — including `llm-thinkers.mdc`, `llm-council.mdc`, and any other rule/protocol file. User-attached or referenced files are permissions for the moderator to consider; they are not automatic permissions for subagents. If file context is needed, the moderator should either read the needed files directly and pass only the relevant content into the prompt, or explicitly instruct the subagent which exact paths it may inspect.
+
+## Roles
+
+- **Agent 1 — Moderator (you)**: Frame and elaborate the question, dispatch the three thinkers **in parallel** at the very start, collect their outputs, merge and de-duplicate the combined option set without dropping any options, and then hand the problem statement + merged options to the **LLM Council** protocol (`llm-council.mdc`) with the explicit instruction to rank from most relevant to least relevant. Do NOT answer the underlying question yourself first, do NOT leak your own opinion into thinker prompts, and do NOT let thinkers see each other's outputs.
+- **Thinker A — GPT 5.5 perspective**: Independently produces multiple framings/options/approaches for the elaborated question.
+- **Thinker B — Opus 4.7 perspective**: Independently produces multiple framings/options/approaches for the elaborated question.
+- **Thinker C — Gemini 3.1 Pro perspective**: Independently produces multiple framings/options/approaches for the elaborated question.
+
+All three thinkers receive the **same** elaborated prompt, except for the GPT 5.5-specific relevance reminder described in Step 1. The diversity comes from the model, not from the prompt — so the prompts themselves are clean problem statements with no meta-commentary about the existence, identity, or work of any other agent.
+
+## Model selection (fixed for thinkers)
+
+The three thinkers MUST run on the following models — these are non-negotiable and the entire point of this protocol is the cognitive diversity that comes from using different models:
+
+- **Thinker A** — `gpt-5.5-medium`
+- **Thinker B** — `claude-opus-4-7-thinking-xhigh`
+- **Thinker C** — `gemini-3.1-pro`
+
+The moderator runs on whichever model the user already has the chat configured for — no constraint.
+
+**Critical dispatch requirement:** You MUST pass the `model` parameter explicitly on every single `Task` tool call in Step 1. The `Task` tool's general guidance says "only choose an explicit model when the user directly requests it" — that guidance is **overridden** here, because invoking this rule (i.e. the user saying `use thinkers`) IS the user's explicit request for those three specific models. If you omit the `model` parameter, all three subagents will silently inherit the moderator's model, which collapses the panel into a single perspective and defeats the protocol. This is the most common failure mode of this rule — guard against it.
+
+Before submitting the Step 1 tool-call batch, do an explicit self-check: confirm that each of the three `Task` calls has a `model` field, and that the three `model` values are exactly `gpt-5.5-medium`, `claude-opus-4-7-thinking-xhigh`, and `gemini-3.1-pro` (one each, no duplicates, no substitutions). If any of these three model slugs is unavailable in the environment, halt and tell the user — do not silently fall back to the moderator's model.
+
+## Procedure
+
+### Step 0 — Frame and elaborate
+
+Restate the user's question or decision in one sentence, then **elaborate** it: add the implied context (constraints, audience, domain, stakes, success criteria) that a thinker needs to produce useful options. Keep the elaboration neutral — do not bias toward any particular option or solution direction. This elaborated prompt is what all three thinkers receive verbatim.
+
+### Step 1 — Parallel ideation (single round, no communication)
+
+Spawn **Thinker A**, **Thinker B**, and **Thinker C** **in parallel in a single tool-call batch** using the `Task` tool. Each thinker is a self-contained subagent invocation; they have no awareness of each other and no shared state. Do **not** tell them that other thinkers exist, do **not** tell them they are part of a panel, and do **not** instruct them on how to coordinate or not coordinate — just hand them the problem and let them answer.
+
+Before dispatching, the moderator must decide the file-access allow-list for each thinker. The default allow-list is empty. If a thinker should read files, name the exact allowed paths in that thinker's prompt and briefly state why those reads are allowed. If the moderator has already read the relevant files and embedded their contents or excerpts in the prompt, keep the thinker's allow-list empty.
+
+For each thinker:
+
+- `subagent_type: "generalPurpose"` (use `"explore"` with `readonly: true` only if the user has explicitly attached or referenced local files that need inspection).
+- `run_in_background: false`.
+- `readonly: true` by default (no write access), unless the user has explicitly authorized writes for this task.
+- `model`: **MANDATORY** — set explicitly to the fixed model assigned to that thinker (see "Model selection" above). Never omit this field; never reuse the same model across two thinkers; never substitute.
+- `description`: 3–5 words, neutral, e.g. `Thinker: ideation options`. Do not encode the model identity in the description.
+- Prompt must include, in this order:
+  1. The user's **original verbatim request**.
+  2. The moderator's **elaborated problem statement** from Step 0.
+  3. Instruction to produce **multiple** options/framings/approaches — not a single recommended answer. Encourage breadth, including unconventional or low-probability options, edge framings, and reframings of the problem itself, while explicitly saying that breadth is not permission to include remotely related ideas. Options must remain highly relevant to the user's actual problem statement and should be excluded if their connection is weak, speculative, or mostly thematic.
+  4. Output format requirement: a numbered list of options. For each option include: (a) a short name/title, (b) a one-paragraph description of what the option is and how it addresses the problem, (c) the key assumption or framing it rests on. No ranking, no "best pick" — pure enumeration.
+  5. Explicit instruction: "Return your complete response. Do not summarize or self-truncate. Do not rank the options. Do not recommend one over the others."
+  6. Explicit instruction: "File-access allow-list: none. Do not read, search, glob, or otherwise inspect any local files, including `llm-thinkers.mdc`, `llm-council.mdc`, or any other rule/protocol file. Use only the information included in this prompt." (If the moderator has decided a thinker needs file access, replace `none` with the exact allowed paths and keep the instruction that all other local files remain forbidden.)
+  7. Explicit instruction: "Do not spawn, invoke, delegate to, or otherwise create any other subagents. Complete this task yourself."
+
+For **Thinker A / GPT 5.5 only**, append this extra instruction without mentioning the model identity, other thinkers, or the panel: "Special relevance discipline: generate breadth inside the problem boundary. Do not keep expanding into options that are merely adjacent, remotely relevant, or interesting in the abstract. Prefer fewer highly relevant options over a long list padded with weakly connected possibilities."
+
+The thinker prompt must NOT mention the existence of other thinkers, parallelism, panels, or coordination rules — these are moderator-side concerns and surfacing them only invites bias.
+
+### Step 2 — Merge and de-duplicate (moderator-only)
+
+Once all three thinkers return, the moderator does the following **without dropping any option**:
+
+1. Pool every option from every thinker into a single internal working list. For the moderator's own internal bookkeeping (used only in the user-facing transparency section), tag each option with an **anonymous source label** that does **not** encode model identity — use neutral letters `[A]`, `[B]`, `[C]` whose mapping to specific models is held only by the moderator and never disclosed to the council. (The user-facing output reveals the mapping for transparency *after* the council has finished.)
+2. Identify options across thinkers that are *substantively the same idea* (not just superficially similar wording). Two options can be combined when their core mechanism, decision, or framing is the same; if there is any meaningful difference (different trade-offs, different assumptions, different scope), keep them separate.
+3. When combining, produce a single merged option that retains the strongest framing from each contributing source. Do not lose nuance during the merge — if one thinker added a useful caveat or sub-variant the merged option must include it. Internally, track combined provenance (e.g. `[A][C]`) for the user-facing display only.
+4. Re-number the merged list. The merged list must be at least as informationally complete as the pooled list — nothing is deleted.
+5. Do **not** rank, score, or order by quality. Ordering at this stage is arbitrary (e.g. insertion order). Ranking is the council's job in Step 3.
+
+### Step 3 — Hand off to the LLM Council for ranking
+
+Invoke the **LLM Council** protocol (`llm-council.mdc`) as the next stage. The moderator continues to act as moderator and now follows the council protocol from its Step 0 forward, with the following pre-supplied framing:
+
+- **Council question (Step 0 frame)**: "Rank the following candidate options from most relevant to the problem statement to least relevant. Use the problem statement as the sole criterion of relevance. Provide a complete ordered ranking; do not drop options."
+- **Council input attached to the prompt of every council subagent**:
+  - The **elaborated problem statement** from Step 0 of this protocol (verbatim).
+  - The **merged, de-duplicated option list** from Step 2 of this protocol — but with **all source/provenance tags stripped out** and options renumbered. The council must see only the options themselves, never which model produced what, never that there were multiple thinkers, and never anything that could bias its ranking by source identity.
+- **Council conditional roles**: This is a **pure ranking task — no implementation, no research**. Explicitly instruct the council that SubAgent 3 (Implementer) and SubAgent 4 (Researcher) are **not** to be spawned for this invocation. Only SubAgent 1 (Proposer = produce initial ranking) and SubAgent 2 (Critic = critique that ranking) are needed, followed by Round 3 (revised ranking) per the council's own procedure.
+- **Council file-access constraint**: Council subagents must not read `llm-council.mdc`, `llm-thinkers.mdc`, or any other local file unless the moderator gives that specific subagent an explicit allow-list of exact paths. The moderator should read `llm-council.mdc` directly if needed to run the protocol, then pass only the needed instructions and inputs to council subagents. Every council subagent prompt must include either `File-access allow-list: none` or the exact allowed paths, plus the instruction that all other local files remain forbidden.
+- **Council delegation constraint**: Every council subagent prompt must include: "Do not spawn, invoke, delegate to, or otherwise create any other subagents. Complete this task yourself."
+- **Council output**: produced exactly as specified in `llm-council.mdc`, including its verbatim transcripts, Key Disagreements, Collective Answer (which will be the ranked list with rationale), and Next Step.
+
+The moderator does not re-rank or override the council's output.
+
+### Hard stop
+
+One round of parallel ideation (Step 1) followed by one council pass (Step 3). The moderator must not loop, must not re-spawn thinkers, and must not add a fourth thinker.
+
+## Dispatch rules
+
+- Use the `Task` tool. `run_in_background: false` so the moderator blocks until all three thinkers return.
+- Step 1 thinkers MUST be dispatched in a **single tool-call batch** (true parallelism, no information leakage between them).
+- Each thinker prompt must include: (a) the user's original verbatim request, (b) the elaborated problem statement, (c) the "produce multiple options" instruction, (d) the output-format requirement, (e) the explicit instruction "Return your complete response. Do not summarize or self-truncate. Do not rank.", (f) the explicit file-access allow-list instruction, (g) the explicit no-subagents instruction. The allow-list is `none` unless the moderator deliberately grants exact paths.
+- Thinker prompts must NOT mention other thinkers, parallelism, coordination, panels, or the moderator's protocol. Just the problem and the output expectations.
+- Never reveal the moderator's own opinion to a thinker, and never disclose model assignments to the council.
+- Do not impose word/option caps — let each thinker generate as many options as it considers warranted, but require that every option clear a high relevance bar. Breadth should explore genuinely different, problem-relevant possibilities, not a long tail of adjacent ideas.
+- Use the fixed model assignment from "Model selection" on every `Task` call by passing the `model` parameter explicitly. **Omitting `model` is a protocol violation** — subagents will inherit the moderator's model and the panel will collapse to a single perspective. Never substitute a different model. If a requested model is unavailable, halt and tell the user which model was missing rather than silently degrading the panel.
+- All thinkers and council subagents are forbidden from reading local files unless the moderator explicitly grants exact paths in that subagent's prompt. Enforce this by including the file-access allow-list instruction in every dispatched prompt, even when the allow-list is empty. The moderator owns rule/protocol reading and any decision to pass file excerpts or exact file-read permissions onward.
+- All thinkers and council subagents are forbidden from spawning or delegating to additional subagents. Enforce this by including the no-subagents instruction in every dispatched prompt.
+
+## Final Output (to the user)
+
+The user-facing output is the **council's full output** from Step 3 (verbatim, per `llm-council.mdc`'s own output spec), **preceded by** a short thinkers-stage header so the user can see what was generated before ranking.
+
+```text
+## Question (elaborated)
+<the moderator's elaborated problem statement from Step 0>
+
+## Thinkers Stage — Raw Options (verbatim, by source)
+
+### Thinker A (gpt-5.5-medium)
+<Thinker A's complete response, verbatim>
+
+### Thinker B (claude-opus-4-7-thinking-xhigh)
+<Thinker B's complete response, verbatim>
+
+### Thinker C (gemini-3.1-pro)
+<Thinker C's complete response, verbatim>
+
+## Merged Option Set (de-duplicated, no options dropped)
+<the numbered merged list from Step 2, each entry tagged with its source(s)>
+
+## Council Ranking
+<the entire output of the LLM Council protocol from Step 3, verbatim — including its `## Question`, `## Council Debate (full transcripts)`, `## Key Disagreements`, `## Collective Answer`, and `## Next Step` sections>
+```
+
+## Exit Conditions
+
+- If the user's prompt does NOT contain the trigger phrase `use thinkers`, drop back to normal single-agent mode and ignore this rule entirely.
+- If the question is so trivial that ideation adds no value (one obvious answer, or a yes/no factual lookup), say so and skip the protocol rather than manufacturing fake breadth.
+- If any of the three required models is unavailable, halt and report which model is missing; do not silently substitute a different model, because the value of this protocol is the specific model diversity.

@@ -11,6 +11,7 @@ Volt is a small marketplace of self-contained Cursor add-ons. Each "pack" is a f
 | [`glassbox`](packs/glassbox/) | rule + stop hook | Auto-generates `.vis.md` mermaid diagrams alongside every code file your agent touches, so you can review intent visually instead of reading raw code. |
 | [`org-hierarchy`](packs/org-hierarchy/) | rule + role contracts | Activated by the phrase `use org`. Spins up a Director → Manager → 10 specialist SDE hierarchy that decomposes ML/eng work and dispatches subagents in parallel. |
 | [`llm-council`](packs/llm-council/) | rule | Activated by the phrase `use council`. Runs a multi-round Proposer / Critic / Implementer / Researcher debate before answering, with full verbatim transcripts. |
+| [`llm-thinkers`](packs/llm-thinkers/) | rule | Activated by the phrase `use thinkers`. Breadth-first ideation panel that fans out to three thinkers on fixed models (gpt-5.5-medium, claude-opus-4-7-thinking-xhigh, gemini-3.1-pro), merges their options, then hands off to `llm-council` for ranking. |
 
 ## Install
 
@@ -27,6 +28,9 @@ curl -fsSL https://raw.githubusercontent.com/harshm121/volt/main/packs/org-hiera
 
 # llm-council
 curl -fsSL https://raw.githubusercontent.com/harshm121/volt/main/packs/llm-council/install.sh | bash
+
+# llm-thinkers
+curl -fsSL https://raw.githubusercontent.com/harshm121/volt/main/packs/llm-thinkers/install.sh | bash
 ```
 
 Each installer is idempotent — re-running it upgrades in place.
