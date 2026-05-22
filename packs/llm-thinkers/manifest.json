@@ -1,0 +1,15 @@
+{
+  "name": "llm-thinkers",
+  "version": "0.1.0",
+  "description": "Breadth-first ideation panel triggered by the phrase `use thinkers`. Fans out to three thinkers on fixed models (gpt-5.5-medium, claude-opus-4-7-thinking-xhigh, gemini-3.1-pro), merges and de-duplicates their options, then hands off to the `llm-council` pack for ranking.",
+  "trigger": "phrase: `use thinkers` (case-insensitive)",
+  "components": {
+    "rules": ["rules/llm-thinkers.mdc"],
+    "hooks": [],
+    "hooks_json": null,
+    "skills": [],
+    "data": []
+  },
+  "requires": [],
+  "notes": "Step 3 of this protocol hands off to the `llm-council` pack (`llm-council.mdc`). Install the `llm-council` pack alongside this one so the ranking handoff resolves; both packs together give you breadth-first ideation followed by structured ranking."
+}
